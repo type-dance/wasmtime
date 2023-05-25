@@ -1,0 +1,37 @@
+name: musl
+
+on:
+  push:
+
+jobs:
+  musl:
+    name: musl
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: deps
+        run: |
+          sudo apt install -y \
+            musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: build
+        run: |
+          cargo build \
+            --target x86_64-unknown-linux-musl \
+            --release \
+            --bin wasmtime \
+            --all-features \
+            --config 'profile.release.lto = "thin"' \
+            --config 'profile.release.strip = "symbols"'
+
+      - name: upload-artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: musl-wasmtime
+          path: target/x86_64-unknown-linux-musl/release/wasmtime
