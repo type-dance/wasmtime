@@ -1,0 +1,93 @@
+name: musl
+
+on:
+  push:
+
+jobs:
+  musl:
+    name: wasmtime-x86_64-linux-musl
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: install-deps
+        run: |
+          sudo apt install -y \
+            llvm \
+            musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: patch-musl
+        run: |
+          pushd $(mktemp -d)
+
+          git clone -b v2.1.2 --depth=1 https://github.com/microsoft/mimalloc.git .
+
+          git apply $GITHUB_WORKSPACE/mimalloc.diff
+
+          cmake \
+            -Bout \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=x86_64-linux-musl-gcc \
+            -DMI_BUILD_SHARED=OFF \
+            -DMI_BUILD_OBJECT=OFF \
+            -DMI_BUILD_TESTS=OFF \
+            .
+
+          cmake --build out -- -j3
+
+          readonly LIBC_PATH=$(find ~/.rustup -name libc.a)
+
+          {
+            echo "CREATE libc.a"
+            echo "ADDLIB $LIBC_PATH"
+            echo "DELETE aligned_alloc.lo"
+            echo "DELETE calloc.lo"
+            echo "DELETE donate.lo"
+            echo "DELETE free.lo"
+            echo "DELETE libc_calloc.lo"
+            echo "DELETE lite_malloc.lo"
+            echo "DELETE malloc.lo"
+            echo "DELETE malloc_usable_size.lo"
+            echo "DELETE memalign.lo"
+            echo "DELETE posix_memalign.lo"
+            echo "DELETE realloc.lo"
+            echo "DELETE reallocarray.lo"
+            echo "ADDLIB out/libmimalloc.a"
+            echo "SAVE"
+          } | llvm-ar -M
+
+          mv libc.a $LIBC_PATH
+
+          popd
+
+      - name: build
+        run: |
+          cargo build \
+            --target x86_64-unknown-linux-musl \
+            --release \
+            --bin wasmtime \
+            --all-features \
+            --config 'profile.release.lto = "thin"' \
+            --config 'profile.release.strip = "symbols"'
+
+          mkdir wasmtime-v11.0.0-x86_64-linux-musl
+          mv target/x86_64-unknown-linux-musl/release/wasmtime wasmtime-v11.0.0-x86_64-linux-musl
+          XZ_OPT=-9 \
+            tar \
+            --sort=name \
+            --mtime=1970-01-01T00:00:00Z \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -cJf wasmtime-v11.0.0-x86_64-linux-musl.tar.xz wasmtime-v11.0.0-x86_64-linux-musl
+
+      - name: upload-artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: wasmtime-x86_64-linux-musl
+          path: wasmtime-v11.0.0-x86_64-linux-musl.tar.xz
